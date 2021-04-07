@@ -208,8 +208,7 @@ class Instruction(object):
     def encode_options(self):
         if self.encodings:
             bytecodes = [encoding(self.operands) for (_, encoding) in self._filter_encodings()]
-            min_length = min(map(len, bytecodes))
-            return filter(lambda b: len(b) == min_length, bytecodes)
+            return bytecodes
         else:
             return bytearray()
 
