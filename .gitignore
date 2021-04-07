@@ -4,6 +4,9 @@
 # PyCharm project files
 .idea/
 
+# vscode project files
+.vscode/
+
 # Auto-generated sources
 peachpy/x86_64/amd.py
 peachpy/x86_64/avx.py
