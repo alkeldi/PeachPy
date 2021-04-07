@@ -207,7 +207,33 @@ class Instruction(object):
 
     def encode_options(self):
         if self.encodings:
-            bytecodes = [encoding(self.operands) for (_, encoding) in self._filter_encodings()]
+            bytecodes = []
+            for (_, encoding) in self._filter_encodings():
+                if self.memory_address:
+                    from peachpy.x86_64.registers import esp
+                    candidate_encodings = []
+                    min_disps = [0, 1, 2, 4]
+                    for mdisp in min_disps:
+                        candidate = encoding(self.operands, min_disp=mdisp)
+                        if candidate not in candidate_encodings:
+                            candidate_encodings.append(candidate)
+                        
+                        index = self.memory_address.index
+                        scale = self.memory_address.scale
+                        if index == None and scale == None:
+                            self.memory_address.index = esp
+                            scales = [1, 2, 4, 8]
+                            for scle in scales:
+                                self.memory_address.scale = scle
+                                candidate = encoding(self.operands, min_disp=mdisp)
+                                if candidate not in candidate_encodings:
+                                    candidate_encodings.append(candidate)
+                        self.memory_address.index = index
+                        self.memory_address.scale = scale
+                        
+                    bytecodes.extend(candidate_encodings)
+                else:
+                    bytecodes.append(encoding(self.operands))
             return bytecodes
         else:
             return bytearray()
