@@ -210,28 +210,97 @@ class Instruction(object):
             bytecodes = []
             for (_, encoding) in self._filter_encodings():
                 if self.memory_address:
-                    from peachpy.x86_64.registers import esp
-                    candidate_encodings = []
-                    min_disps = [0, 1, 2, 4]
+                    candidate_encodings = set()
+
+                    # esp is used to represent the zero register eiz/riz as they have the same encoding
+                    from peachpy.x86_64.registers import esp as zero_reg
+                    from peachpy.x86_64.operand import RIPRelativeOffset
+
+                    # try all possible displacements
+                    min_disps = [0, 1, 4] # Note: 32bit mode uses 2-bytes instead of 4-bytes
                     for mdisp in min_disps:
-                        candidate = encoding(self.operands, min_disp=mdisp)
-                        if candidate not in candidate_encodings:
-                            candidate_encodings.append(candidate)
-                        
-                        index = self.memory_address.index
-                        scale = self.memory_address.scale
-                        if index == None and scale == None:
-                            self.memory_address.index = esp
-                            scales = [1, 2, 4, 8]
-                            for scle in scales:
-                                self.memory_address.scale = scle
+
+                        # some segment registers have no effect when used with memory in the flat 64-bit mode,
+                        # so using them here provides extra alternate encodings
+                        segment_prefixes = [b"", b"\x2E", b"\x36", b"\x3E", b"\x26"] # empty, CS, SS, DS, ES
+                        for seg in segment_prefixes:
+                            candidate = encoding(self.operands, min_disp=mdisp)
+                            candidate_encodings.add(seg + bytes(candidate))
+
+                            # when relative addressing is used, then stop because no index/scale
+                            # is allowed, and only one displacement length is valid
+                            if type(self.memory_address) == RIPRelativeOffset:
+                                continue
+
+                            # save address information for temporary changes
+                            index = self.memory_address.index
+                            scale = self.memory_address.scale
+                            base = self.memory_address.base
+
+                            # TODO: Displacement Only (can be implemented only after implementing global addresses support):
+                            #           ==> Example: 48 89 04 A5 11 22 33 44    mov    QWORD PTR [riz*4+0x44332211], rax
+                            # 
+                            if (base is None) and (scale is None) and (index is None):
+                                raise ValueError("Global addressing is not yet supported")
+
+                            # if [reg], then try [reg + 0*scale], [reg*1]
+                            elif (base is not None) and (scale is None) and (index is None):
+                                # [reg] --> [reg + 0*scale]
+                                scales = [1, 2, 4, 8]
+                                self.memory_address.index = zero_reg
+                                for scle in scales:
+                                    self.memory_address.scale = scle
+                                    candidate = encoding(self.operands, min_disp=mdisp, sib=True)
+                                    candidate_encodings.add(seg + bytes(candidate))
+
+                                # [reg] --> [reg*1]
+                                self.memory_address.base = None
+                                self.memory_address.index = base
+                                self.memory_address.scale = 1
+                                candidate = encoding(self.operands, min_disp=mdisp, sib=True)
+                                candidate_encodings.add(seg + bytes(candidate))
+
+                            # if [reg*1], then try [reg], [reg + 0*scale]
+                            # if [reg*2], then try [reg + reg*1]
+                            elif (base is None) and (scale == 1 or scale == 2) and (index is not None):
+                                # [reg*1]
+                                if scale == 1:
+                                    # [reg*1] --> [reg]
+                                    self.memory_address.base = index
+                                    self.memory_address.index = None
+                                    self.memory_address.scale = None
+                                    candidate = encoding(self.operands, min_disp=mdisp, sib=False)
+                                    candidate_encodings.add(seg + bytes(candidate))
+
+                                    # [reg*1] --> [reg + riz*scale]
+                                    scales = [1, 2, 4, 8]
+                                    self.memory_address.index = esp
+                                    for scle in scales:
+                                        self.memory_address.scale = scle
+                                        candidate = encoding(self.operands, min_disp=mdisp, sib=True)
+                                        candidate_encodings.add(seg + bytes(candidate))
+                                
+                                # [reg*2] ==> [reg + reg*1]
+                                elif scale == 2:
+                                    self.memory_address.base = index
+                                    self.memory_address.scale = 1
+                                    candidate = encoding(self.operands, min_disp=mdisp, sib=False)
+                                    candidate_encodings.add(seg + bytes(candidate))
+
+                            # if [reg1 + reg2*1], then try [reg1*1 + reg2]
+                            elif (base is not None) and (scale == 1) and (index is not None):
+                                self.memory_address.index = base
+                                self.memory_address.base = index
                                 candidate = encoding(self.operands, min_disp=mdisp)
-                                if candidate not in candidate_encodings:
-                                    candidate_encodings.append(candidate)
-                        self.memory_address.index = index
-                        self.memory_address.scale = scale
-                        
-                    bytecodes.extend(candidate_encodings)
+                                candidate_encodings.add(seg + bytes(candidate))
+
+                            # restore address information 
+                            self.memory_address.index = index
+                            self.memory_address.scale = scale
+                            self.memory_address.base = base
+                    
+                    # convert back to bytearray, and append result to bytecodes.
+                    bytecodes.extend([bytearray(candidate) for candidate in candidate_encodings])
                 else:
                     bytecodes.append(encoding(self.operands))
             return bytecodes
