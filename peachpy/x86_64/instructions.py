@@ -209,6 +209,7 @@ class Instruction(object):
         if self.encodings:
             bytecodes = []
             for (_, encoding) in self._filter_encodings():
+                # TODO: is  CALL 0xa == CALL [rip + 0xa] ?
                 if self.memory_address:
                     candidate_encodings = set()
 
@@ -274,7 +275,7 @@ class Instruction(object):
 
                                     # [reg*1] --> [reg + riz*scale]
                                     scales = [1, 2, 4, 8]
-                                    self.memory_address.index = esp
+                                    self.memory_address.index = zero_reg
                                     for scle in scales:
                                         self.memory_address.scale = scle
                                         candidate = encoding(self.operands, min_disp=mdisp, sib=True)
